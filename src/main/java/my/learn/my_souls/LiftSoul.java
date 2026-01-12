@@ -1,150 +1,206 @@
 package my.learn.my_souls;
 
-import lombok.AllArgsConstructor;
-import lombok.Builder;
-import lombok.Getter;
-import lombok.SneakyThrows;
+import lombok.*;
 
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Random;
-import java.util.concurrent.Exchanger;
-import java.util.concurrent.Phaser;
-import java.util.concurrent.locks.Lock;
-import java.util.concurrent.locks.ReentrantLock;
+import java.util.concurrent.atomic.AtomicInteger;
 
-public class LiftSoul { //todo
+public class LiftSoul {
 
     public static void main(String[] args) {
-        List<Passenger> passengers = new ArrayList<>();
 
-        Passenger p;
+        final int COUNT_OF_PASSENGERS = 15;
+        final int MAX_LIFT_WEIGHT = 400;
+
+        List<Floor> floors = new ArrayList<>();
+        Floor floor;
+        for (int i = 1; i <= 5; i++) {
+            floor = new Floor(i);
+            floors.add(floor);
+        }
+
+        Thread t;
         Random rand = new Random();
+        AtomicInteger counter = new AtomicInteger();
 
-        int maxFloor = 20;
-        int minFloor = 1;
-        Phaser phaser = new Phaser(1);
 
-         for (int i = 1; i <= 10; i++) {
-             p = new Passenger(
-                     rand.nextInt(minFloor, maxFloor),
-                     rand.nextInt(minFloor, maxFloor),
-                     rand.nextInt(40, 80),
-                     phaser,
-                     0
-             );
-             passengers.add(p);
-         }
+        for (int i = 1; i <= COUNT_OF_PASSENGERS; i++) {
+            Floor startFloor = floors.get(rand.nextInt(0, floors.size()-1));
+            Floor endFloor = floors.get(rand.nextInt(0, floors.size()-1));
 
-        Thread lift = new Thread(new Lift(
-                passengers,
-                maxFloor,
-                minFloor,
-                minFloor,
-                Lift.Movement.UP,
-                400,
-                phaser,
-                new ReentrantLock()
-        ));
+            while (endFloor.equals(startFloor)) {
+                endFloor = floors.get(rand.nextInt(0, floors.size()-1));
+            }
 
-         lift.start();
+            t = new Thread(new Passenger(
+                    i,
+                    startFloor,
+                    endFloor,
+                    counter
+            ));
+
+            t.setPriority(10);
+            t.start();
+        }
+
+        t = new Thread(new Lift(
+                floors,
+                new ArrayList<>(),
+                floors.get(0).getValue(),
+                Lift.Direction.UP,
+                counter,
+                COUNT_OF_PASSENGERS
+                ));
+        t.start();
     }
 
 }
 
-@Builder
-class Lift implements Runnable {
+@RequiredArgsConstructor
+class Floor {
+    @Getter
+    private final int value;
 
-    private List<Passenger> passengers;
-
-    private int maxFloor;
-    private int minFloor;
-
-    private int currentFloor;
-    private Movement lastMove;
-
-    private int maxWeight;
-
-    private Phaser phaser;
-    private Lock lock;
-
-
-
-    @SneakyThrows
-    @Override
-    public void run() {
-        System.out.println("Лифт приехал на этаж: " + currentFloor);
-
-
-        Thread.sleep(5000);
-        if (passengers.isEmpty()) {
-            // лифт закончил работу
-            phaser.arriveAndDeregister();
-        }
-        for (Passenger passenger : passengers) {
-            if (passenger.getEndFloor() == currentFloor) {
-                passengers.remove(passenger);
-            }
-
-            if (passenger.getStartFloor() == currentFloor) {
-                phaser.register();
-                new Thread(passenger).start();
-            }
-        }
-
-
-        phaser.arriveAndAwaitAdvance();
-        System.out.println("Пассажиры сели в лифт на этаже: " + currentFloor);
-        if (currentFloor == minFloor) {
-            lastMove = Movement.UP;
-        } else if (currentFloor == maxFloor) {
-            lastMove = Movement.DOWN;
-        }
-        goNext();
-        System.out.println("Лифт поехал на этаж: " + currentFloor);
-        Thread.sleep(3000);
-    }
-
-    private void goNext() {
-        lock.lock();
-        if (lastMove == Movement.UP) {
-            currentFloor++;
-        }  else if (lastMove == Movement.DOWN) {
-            currentFloor--;
-        }
-        lock.unlock();
-    }
-
-    enum Movement {
-        UP, DOWN
-    }
-
+    @Getter @Setter
+    private volatile Lift lift;
 }
 
 @AllArgsConstructor
-@Getter
+class Lift implements Runnable {
+
+    enum Direction {
+        UP, DOWN
+    }
+
+    private final List<Floor> floors;
+    private final List<Passenger> passengers;
+    @Getter
+    private volatile int currentFloor;
+    private Direction direction;
+
+    private AtomicInteger counter;
+    private Integer maxCounts;
+
+
+
+    @Override
+    public void run() {
+
+        while (maxCounts > counter.get()) {
+            goNext();
+        }
+
+    }
+
+    @SneakyThrows
+    private void goNext() {
+        Thread.sleep(1000);
+        System.out.println("Лифт приехал на этаж " + currentFloor);
+        Floor floor = floors.get(currentFloor - 1);
+
+        if (currentFloor == floors.get(floors.size()-1).getValue()) {
+            direction = Direction.DOWN;
+        } else if (currentFloor == floors.get(0).getValue()) {
+            direction = Direction.UP;
+        }
+
+        synchronized (floor) {
+            floor.setLift(this);
+            floor.notifyAll();
+        }
+
+        Thread.sleep(5000);
+
+        synchronized (floor) {
+            switch (direction) {
+                case UP -> currentFloor++;
+                case DOWN -> currentFloor--;
+            }
+            floor.setLift(null);
+            System.out.println("Лифт отправляется на этаж " + currentFloor);
+        }
+
+    }
+
+    @SneakyThrows
+    public synchronized boolean tryComeIn(Passenger passenger) {
+        Thread.sleep(1500);
+        passengers.add(passenger);
+        System.out.println("Пассажир " + passenger + " cел в лифт");
+        return true;
+    }
+
+    @SneakyThrows
+    public synchronized void goOut(Passenger passenger) {
+        Thread.sleep(1500);
+        passengers.remove(passenger);
+        System.out.println("Пассажир " + passenger + " покинул лифт");
+    }
+}
+
+@AllArgsConstructor
 class Passenger implements Runnable {
 
-    private int startFloor;
-    private int endFloor;
-    private int weight;
+    @Getter
+    private final int id;
+    private final Floor startFloor;
+    private final Floor endFloor;
 
-    private Phaser phaser;
-    private volatile int currentFloor;
+    private AtomicInteger counter;
 
     @SneakyThrows
     @Override
     public void run() {
-        System.out.println("Пассажир " + startFloor + "->" + endFloor + " сел в лифт");
+        System.out.println("Пассажир " + this + " ждет лифта");
 
-        while (currentFloor != endFloor) {
-            phaser.arriveAndAwaitAdvance();
+        synchronized (startFloor) {
+            while (startFloor.getLift() == null || !startFloor.getLift().tryComeIn(this)) {
+                startFloor.wait();
+            }
         }
-        Thread.sleep(1000);
-        System.out.println("Пассажир " + startFloor + "->" + endFloor + " покинул лифт");
-        phaser.arriveAndDeregister();
+
+        synchronized (endFloor) {
+            while (endFloor.getLift() == null) {
+                endFloor.wait();
+            }
+            endFloor.getLift().goOut(this);
+        }
+
+        System.err.println("Пассажиров доехало: " + counter.incrementAndGet());
+
+
     }
 
-
+    @Override
+    public String toString() {
+        return id + "[" + startFloor.getValue() +
+                "->" + endFloor.getValue() + "]";
+    }
 }
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 
