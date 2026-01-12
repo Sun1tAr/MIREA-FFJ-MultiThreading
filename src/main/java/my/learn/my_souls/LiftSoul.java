@@ -34,11 +34,14 @@ public class LiftSoul {
                 endFloor = floors.get(rand.nextInt(0, floors.size()-1));
             }
 
+            int weight = rand.nextInt((int) (0.1*MAX_LIFT_WEIGHT), (int) (0.25*MAX_LIFT_WEIGHT));
+
             t = new Thread(new Passenger(
                     i,
                     startFloor,
                     endFloor,
-                    counter
+                    counter,
+                    weight
             ));
 
             t.setPriority(10);
@@ -51,7 +54,8 @@ public class LiftSoul {
                 floors.get(0).getValue(),
                 Lift.Direction.UP,
                 counter,
-                COUNT_OF_PASSENGERS
+                COUNT_OF_PASSENGERS,
+                MAX_LIFT_WEIGHT
                 ));
         t.start();
     }
@@ -82,6 +86,8 @@ class Lift implements Runnable {
 
     private AtomicInteger counter;
     private Integer maxCounts;
+
+    private int maxWeight;
 
 
 
@@ -127,9 +133,22 @@ class Lift implements Runnable {
     @SneakyThrows
     public synchronized boolean tryComeIn(Passenger passenger) {
         Thread.sleep(1500);
-        passengers.add(passenger);
-        System.out.println("Пассажир " + passenger + " cел в лифт");
-        return true;
+
+        int currentWeight = 0;
+        for (Passenger p: passengers) {
+            currentWeight += p.getWeight();
+        }
+
+        if (currentWeight + passenger.getWeight() <= maxWeight) {
+            passengers.add(passenger);
+            System.out.println("Пассажир " + passenger + " cел в лифт [" + (currentWeight + passenger.getWeight()) + "]");
+            return true;
+        } else {
+            System.err.println("Пассажир " + passenger + " слишком толст для этого лифта: "+
+                    (currentWeight + passenger.getWeight()) + "/" + maxWeight);
+            return false;
+        }
+
     }
 
     @SneakyThrows
@@ -149,6 +168,8 @@ class Passenger implements Runnable {
     private final Floor endFloor;
 
     private AtomicInteger counter;
+    @Getter
+    private final int weight;
 
     @SneakyThrows
     @Override
